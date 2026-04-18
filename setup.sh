@@ -15,6 +15,8 @@ if [ ! -d "$ORCH/.venv" ]; then
   python3 -m venv "$ORCH/.venv"
 fi
 
+echo "→ Upgrading pip..."
+"$ORCH/.venv/bin/pip" install -q --upgrade pip
 echo "→ Installing dependencies..."
 "$ORCH/.venv/bin/pip" install -q -r "$ORCH/requirements.txt"
 echo "  ✓ Dependencies installed"
