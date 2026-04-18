@@ -9,10 +9,40 @@ echo "║       Crew Orchestrator Setup        ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
 
+# ── Python version ────────────────────────────────────────────────────────────
+PYTHON=""
+for candidate in python3.13 python3.12 python3.11 python3.10; do
+  if command -v "$candidate" &>/dev/null; then
+    PYTHON="$candidate"
+    break
+  fi
+done
+
+# Fall back to python3 if it's >= 3.10
+if [ -z "$PYTHON" ]; then
+  PY_VER=$(python3 -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo "0")
+  if [ "$PY_VER" -ge 10 ]; then
+    PYTHON="python3"
+  fi
+fi
+
+if [ -z "$PYTHON" ]; then
+  echo "  ✗ Python 3.10+ is required but not found."
+  echo ""
+  echo "  Install it with Homebrew:"
+  echo "    brew install python@3.11"
+  echo ""
+  echo "  Then re-run: ./setup.sh"
+  exit 1
+fi
+
+echo "  ✓ Using $($PYTHON --version)"
+echo ""
+
 # ── Python env ────────────────────────────────────────────────────────────────
 if [ ! -d "$ORCH/.venv" ]; then
   echo "→ Creating Python virtual environment..."
-  python3 -m venv "$ORCH/.venv"
+  "$PYTHON" -m venv "$ORCH/.venv"
 fi
 
 echo "→ Upgrading pip..."
