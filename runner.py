@@ -8,7 +8,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from router import infer_task_type
-from context_loader import resolve_project_path
+from context_loader import (
+    resolve_project_path, scan_cursor_folder,
+    build_rules_block, build_skills_index_block, build_agent_context_block,
+)
 from registry import upsert_branch, update_branch_status
 import logger as run_logger
 
@@ -22,13 +25,15 @@ CAVEMAN_PROMPT = (
     "ACTIVE EVERY RESPONSE. No revert. No filler drift."
 )
 
-# Keyword → skill name: auto-inject when description contains these words
+# Keyword → skill name: auto-inject full skill content when description matches
 SKILL_AUTO_KEYWORDS: dict[str, list[str]] = {
-    "ui-implementation": ["component", "tsx", "jsx", "button", "modal", "form", "tailwind", "ui", "render", "style", "dialog", "dropdown"],
-    "react-component-tests": ["component", "tsx", "hook", "render", "rtl", "testing-library"],
-    "e2e-tests": ["e2e", "playwright", "visual test", "end-to-end", "automation", "spec", "pom", "test", "tests", "coverage", "flake", "flaky"],
-    "unit-tests": ["unit test", "node:assert", "sinon", "trpc", "meteor method"],
-    "mongodb": ["mongo", "collection", "query", "aggregate", "db.", "database"],
+    "ui-implementation":      ["component", "tsx", "jsx", "button", "modal", "form", "tailwind", "ui", "render", "style", "dialog", "dropdown"],
+    "react-component-tests":  ["component", "tsx", "hook", "render", "rtl", "testing-library"],
+    "e2e-tests":              ["e2e", "playwright", "visual test", "end-to-end", "automation", "spec", "pom", "test", "tests", "coverage", "flake", "flaky"],
+    "unit-tests":             ["unit test", "node:assert", "sinon", "trpc", "meteor method"],
+    "mongodb":                ["mongo", "collection", "query", "aggregate", "db.", "database"],
+    "feature-development":    ["feature", "new screen", "new page", "new flow", "implement"],
+    "github-pull-requests":   ["pr", "pull request", "review", "merge"],
 }
 
 TASK_MAP = {
@@ -59,7 +64,6 @@ def _load_file_stripped(path: Path, max_lines: int = 200) -> str:
     if not path.exists():
         return ""
     text = path.read_text(errors="ignore")
-    # Strip YAML frontmatter (---...---)
     if text.startswith("---"):
         end = text.find("\n---", 3)
         if end != -1:
@@ -70,25 +74,19 @@ def _load_file_stripped(path: Path, max_lines: int = 200) -> str:
     return text.strip()
 
 
-def _build_context_block(cfg: dict, description: str, project_root: str) -> str:
-    """Build skill/rules/commands context block for injection into task descriptions."""
+def _build_skill_block(cfg: dict, description: str, project_root: str) -> str:
+    """Build explicit + auto-detected skill content for injection."""
     if not project_root:
         return ""
-
     root = Path(project_root).expanduser()
     parts = []
-
-    # Explicit skills from task config
     explicit_skills = cfg.get("skills", [])
     skill_sections = cfg.get("skill_sections", {})
-
-    # Auto-detect additional skills from description keywords
     desc_lower = description.lower()
     auto_skills = [
-        skill_name for skill_name, keywords in SKILL_AUTO_KEYWORDS.items()
-        if skill_name not in explicit_skills and any(kw in desc_lower for kw in keywords)
+        s for s, kws in SKILL_AUTO_KEYWORDS.items()
+        if s not in explicit_skills and any(kw in desc_lower for kw in kws)
     ]
-
     for skill_name in explicit_skills + auto_skills:
         skill_path = root / ".cursor" / "skills" / skill_name / "SKILL.md"
         if not skill_path.exists():
@@ -101,28 +99,7 @@ def _build_context_block(cfg: dict, description: str, project_root: str) -> str:
                 parts.append(f"## SKILL: {skill_name}\n" + "\n\n".join(extracted))
         else:
             parts.append(f"## SKILL: {skill_name}\n{text}")
-
-    # Rules
-    for rule_name in cfg.get("rules", []):
-        for ext in [".mdc", ".md"]:
-            rule_path = root / ".cursor" / "rules" / f"{rule_name}{ext}"
-            if rule_path.exists():
-                text = _load_file_stripped(rule_path, max_lines=100)
-                parts.append(f"## RULE: {rule_name}\n{text}")
-                break
-
-    # Commands
-    for cmd_name in cfg.get("commands", []):
-        for candidate in [
-            root / ".cursor" / "commands" / f"{cmd_name}.md",
-            root / ".cursor" / "commands" / cmd_name / "README.md",
-        ]:
-            if candidate.exists():
-                text = _load_file_stripped(candidate, max_lines=80)
-                parts.append(f"## COMMAND: {cmd_name}\n{text}")
-                break
-
-    return "\n\n---\n\n".join(parts) if parts else ""
+    return "\n\n---\n\n".join(parts)
 
 
 def _build_agent(name: str):
@@ -140,17 +117,41 @@ def _build_agent(name: str):
     )
 
 
-def _build_task(task_name: str, agent, context_tasks: list, inputs: dict, project_root: str = None):
+def _build_task(task_name: str, agent, context_tasks: list, inputs: dict,
+                project_root: str = None, cursor_ctx: dict = None, agent_name: str = None):
     from crewai import Task
     tasks_cfg = _load_yaml(BASE / "tasks.yaml")
     cfg = tasks_cfg[task_name]
     description = cfg["description"].format(**{k: v or "" for k, v in inputs.items()})
 
-    # Inject skill/rules/commands context
+    injections = []
+
+    # 1. Agent-specific rules from .cursor/rules/
+    if cursor_ctx and agent_name:
+        rules_block = build_rules_block(agent_name, cursor_ctx)
+        if rules_block:
+            injections.append(rules_block)
+
+    # 2. Skills index into planner so it knows what exists
+    if cursor_ctx and agent_name == "planner":
+        skills_block = build_skills_index_block(cursor_ctx)
+        if skills_block:
+            injections.append(skills_block)
+
+    # 3. Specialist agent context from .cursor/agents/ (keyword-matched)
+    if cursor_ctx:
+        agent_ctx = build_agent_context_block(inputs.get("description", ""), cursor_ctx)
+        if agent_ctx:
+            injections.append(agent_ctx)
+
+    # 4. Explicit + auto-detected full skill content
     if project_root:
-        context_block = _build_context_block(cfg, inputs.get("description", ""), project_root)
-        if context_block:
-            description = description + "\n\n---\n\n" + context_block
+        skill_block = _build_skill_block(cfg, inputs.get("description", ""), project_root)
+        if skill_block:
+            injections.append(skill_block)
+
+    if injections:
+        description = description + "\n\n---\n\n" + "\n\n---\n\n".join(injections)
 
     return Task(
         description=description,
@@ -161,11 +162,9 @@ def _build_task(task_name: str, agent, context_tasks: list, inputs: dict, projec
 
 
 def _extract_git_artifacts(output_text: str) -> dict:
-    """Parse COMMIT_MSG, PR_TITLE, PR_BODY, FILES from git_task output."""
     result = {"commit_msg": None, "pr_title": None, "pr_body": None, "files": []}
     in_pr_body = False
     pr_body_lines = []
-
     for line in output_text.splitlines():
         if line.startswith("COMMIT_MSG:"):
             result["commit_msg"] = line[len("COMMIT_MSG:"):].strip()
@@ -180,27 +179,23 @@ def _extract_git_artifacts(output_text: str) -> dict:
                 pr_body_lines.append(first)
         elif line.startswith("FILES:"):
             in_pr_body = False
-            files_str = line[len("FILES:"):].strip()
-            result["files"] = [f.strip() for f in files_str.split(",") if f.strip()]
+            result["files"] = [f.strip() for f in line[len("FILES:"):].split(",") if f.strip()]
         elif line.strip() == "DONE":
             in_pr_body = False
         elif in_pr_body:
             pr_body_lines.append(line)
-
     if pr_body_lines:
         result["pr_body"] = "\n".join(pr_body_lines)
     return result
 
 
 def _write_extracted_files(project_root: Path, task_outputs: list[str]) -> list[str]:
-    """Extract fenced code blocks from agent outputs and write files to disk."""
     written = []
     pattern = re.compile(r"```(?:\w+\n)?([^\n`][^\n]*)\n(.*?)```", re.DOTALL)
     for output in task_outputs:
         for m in pattern.finditer(output):
             rel_path = m.group(1).strip()
             content = m.group(2)
-            # Skip if it looks like a language tag rather than a path
             if "/" not in rel_path and "." not in rel_path:
                 continue
             full_path = project_root / rel_path
@@ -211,54 +206,32 @@ def _write_extracted_files(project_root: Path, task_outputs: list[str]) -> list[
 
 
 def _create_branch_and_pr(
-    project_root: Path,
-    branch: str,
-    task_id: str,
-    task_type: str,
-    description: str,
-    staged_files: list[str],
-    linear_id: str = None,
-    commit_msg: str = None,
-    pr_title: str = None,
-    pr_body: str = None,
+    project_root: Path, branch: str, task_id: str, task_type: str,
+    description: str, staged_files: list[str], linear_id: str = None,
+    commit_msg: str = None, pr_title: str = None, pr_body: str = None,
     auto_pr: bool = True,
 ) -> dict:
-    """Create git branch, commit staged files, open draft PR."""
     result = {}
     cwd = str(project_root)
 
-    def run(cmd, **kwargs):
-        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, **kwargs)
+    def run(cmd):
+        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
 
-    # Create branch
     run(["git", "checkout", "-b", branch])
-
-    # Stage files
     for f in staged_files:
         run(["git", "add", f])
-
-    # Commit
     msg = commit_msg or f"{task_type}: {description[:60]}"
     run(["git", "commit", "-m", msg])
     result["commit_msg"] = msg
 
     if auto_pr:
-        # Build PR title
         title = pr_title or f"{description[:60]} [{task_id}]"
         if linear_id:
             title = f"[{linear_id}] {title}"
-
-        # Build PR body
         body = pr_body or f"Task: {description}\n\nFiles changed:\n" + "\n".join(f"- {f}" for f in staged_files)
-
-        pr_result = run(["gh", "pr", "create",
-                         "--title", title,
-                         "--body", body,
-                         "--draft",
-                         "--head", branch])
+        pr_result = run(["gh", "pr", "create", "--title", title, "--body", body, "--draft", "--head", branch])
         if pr_result.returncode == 0:
-            pr_url = pr_result.stdout.strip()
-            result["pr_url"] = pr_url
+            result["pr_url"] = pr_result.stdout.strip()
         else:
             result["pr_error"] = pr_result.stderr.strip()
 
@@ -266,13 +239,9 @@ def _create_branch_and_pr(
 
 
 def run_crew(
-    project: str,
-    task_id: str,
-    description: str,
-    task_type: str = None,
-    linear_id: str = None,
-    branch: str = None,
-    auto_pr: bool = True,
+    project: str, task_id: str, description: str,
+    task_type: str = None, linear_id: str = None,
+    branch: str = None, auto_pr: bool = False,
 ) -> dict:
     from crewai import Crew, Process
 
@@ -285,25 +254,26 @@ def run_crew(
 
     project_root = resolve_project_path(project)
 
-    # Load project structure hint if available
+    # Scan .cursor folder once — used by all tasks in this run
+    cursor_ctx = scan_cursor_folder(project_root) if project_root else {}
+
+    # Load structure hint from projects.yaml
     project_context = ""
-    cfg_path = BASE / "projects.yaml"
-    if cfg_path.exists():
-        try:
-            proj_cfg = yaml.safe_load(cfg_path.read_text())
-            project_context = proj_cfg.get("projects", {}).get(project, {}).get("structure_hint", "")
-        except Exception:
-            pass
+    try:
+        proj_cfg = yaml.safe_load((BASE / "projects.yaml").read_text())
+        project_context = proj_cfg.get("projects", {}).get(project, {}).get("structure_hint", "")
+    except Exception:
+        pass
 
     task_names = TASK_MAP.get(task_type, TASK_MAP["feature"])
-
-    # Derive unique agent names from tasks.yaml (preserving order)
     tasks_cfg = _load_yaml(BASE / "tasks.yaml")
-    seen = {}
+
+    # Unique agent names in order
+    seen: dict[str, bool] = {}
     for tname in task_names:
-        agent_name = tasks_cfg.get(tname, {}).get("agent", "")
-        if agent_name and agent_name not in seen:
-            seen[agent_name] = True
+        aname = tasks_cfg.get(tname, {}).get("agent", "")
+        if aname and aname not in seen:
+            seen[aname] = True
     unique_agent_names = list(seen.keys())
 
     run_logger.start_run(project, task_id, task_type, description, unique_agent_names)
@@ -317,52 +287,35 @@ def run_crew(
         "project_context": project_context,
     }
 
-    # Build agents
     agent_map = {name: _build_agent(name) for name in unique_agent_names}
 
-    # Build tasks
     built_tasks = []
-    task_outputs = []
     for tname in task_names:
         agent_name = tasks_cfg[tname]["agent"]
         agent = agent_map.get(agent_name)
         if not agent:
             continue
-        t = _build_task(tname, agent, built_tasks.copy(), inputs, project_root)
+        t = _build_task(tname, agent, built_tasks.copy(), inputs,
+                        project_root=project_root, cursor_ctx=cursor_ctx, agent_name=agent_name)
         built_tasks.append(t)
 
-    crew = Crew(
-        agents=list(agent_map.values()),
-        tasks=built_tasks,
-        process=Process.sequential,
-        verbose=True,
-    )
-
+    crew = Crew(agents=list(agent_map.values()), tasks=built_tasks, process=Process.sequential, verbose=True)
     result = crew.kickoff(inputs=inputs)
 
-    # Collect all agent outputs
-    for task_obj in built_tasks:
-        if hasattr(task_obj, "output") and task_obj.output:
-            task_outputs.append(str(task_obj.output))
+    task_outputs = [str(t.output) for t in built_tasks if hasattr(t, "output") and t.output]
 
-    # Record token usage (best-effort)
+    # Token tracking (best-effort)
     try:
         tu = getattr(result, "token_usage", None)
         if tu:
-            run_logger.record_tokens(
-                project, task_id, "crew",
+            run_logger.record_tokens(project, task_id, "crew",
                 input_tokens=getattr(tu, "prompt_tokens", 0),
-                output_tokens=getattr(tu, "completion_tokens", 0),
-            )
+                output_tokens=getattr(tu, "completion_tokens", 0))
     except Exception:
         pass
 
-    # Extract git artifacts from git_task output
-    git_artifacts = {}
-    if built_tasks and task_outputs:
-        git_artifacts = _extract_git_artifacts(task_outputs[-1])
+    git_artifacts = _extract_git_artifacts(task_outputs[-1]) if task_outputs else {}
 
-    # Write files and create PR
     staged_files = []
     pr_url = None
     if project_root:
@@ -371,8 +324,7 @@ def run_crew(
         if staged_files and auto_pr:
             try:
                 git_result = _create_branch_and_pr(
-                    root_path, branch, task_id, task_type, description,
-                    staged_files,
+                    root_path, branch, task_id, task_type, description, staged_files,
                     linear_id=linear_id,
                     commit_msg=git_artifacts.get("commit_msg"),
                     pr_title=git_artifacts.get("pr_title"),
@@ -383,8 +335,8 @@ def run_crew(
             except Exception as e:
                 print(f"Git/PR error: {e}")
 
-    upsert_branch(project, task_id, branch, task_type, description, "awaiting-review",
-                  pr_url=pr_url, staged_files=staged_files)
+    upsert_branch(project, task_id, branch, task_type, description,
+                  "awaiting-review", pr_url=pr_url, staged_files=staged_files)
     run_logger.complete_run(project, task_id, outcome="draft_pr_created" if pr_url else "awaiting-review")
 
     return {"task_id": task_id, "branch": branch, "task_type": task_type,
@@ -392,18 +344,10 @@ def run_crew(
 
 
 def run_revision(project: str, task_id: str, feedback: str) -> dict:
-    """Run a targeted revision based on reviewer feedback."""
     from registry import get_branch
     branch_info = get_branch(project, task_id)
     if not branch_info:
         return {"error": "task not found"}
-
     description = f"REVISION of {task_id}: {feedback}\nOriginal: {branch_info.get('description', '')}"
-    return run_crew(
-        project=project,
-        task_id=f"{task_id}-rev",
-        description=description,
-        task_type="bug",
-        branch=branch_info.get("branch"),
-        auto_pr=False,
-    )
+    return run_crew(project=project, task_id=f"{task_id}-rev", description=description,
+                    task_type="bug", branch=branch_info.get("branch"), auto_pr=False)
