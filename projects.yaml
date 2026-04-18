@@ -1,0 +1,18 @@
+projects:
+  planable-app:
+    path: ~/Work/PlanableRepo/planable-app
+    linear_project: PLN
+    slack_channel: "#eng"
+    default_base_branch: main
+
+    # Injected into every agent task as {project_context}
+    structure_hint: >
+      TypeScript/React/Meteor codebase. ALL source files live under imports/.
+      Feature code: imports/ui/client/features/<kebab-case>/
+      Shared components: imports/ui/client/components/
+      Utils: imports/utils/
+      Server: imports/api/
+      Tests: *.tests.ts (same directory as the source file, NOT at project root).
+      NEVER place files at the project root level. Always prefix paths with imports/.
+      Example correct path: imports/utils/formatBytes.tests.ts
+      Example WRONG path: utils/formatBytes.tests.ts (missing imports/ prefix)

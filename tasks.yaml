@@ -1,0 +1,117 @@
+# Task pipeline definitions — each task feeds output into the next via context injection.
+# NOTE: Agents have NO tools. All output must be plain text / code blocks.
+# NOTE: Literal curly braces in descriptions MUST be doubled ({{ }}) due to Python str.format().
+
+git_preflight_task:
+  skills: [github-pull-requests]
+  description: >
+    Task: "{description}" | ID: {task_id} | Linear: {linear_id} | Branch: {branch}
+    Pre-flight git validation. Output EXACTLY in this format, nothing else:
+    BRANCH_VALID: yes|no
+    SCOPE: ok|broad
+    COMMIT_MSG: <emoji> [{linear_id}] Sentence-case subject (max 72 chars total)
+    CONCERNS: <text or "none">
+    Allowed emojis: ⭐️ feature, 🐞 bug, ✅ test, ♻️ refactor, 🚨 hotfix, 📓 docs, 🛠 chore.
+    Branch convention: type/TASK-XXX-slug, lowercase-hyphenated.
+  expected_output: >
+    BRANCH_VALID, SCOPE, COMMIT_MSG, CONCERNS. No prose.
+  agent: git_expert
+
+plan_task:
+  description: >
+    Task: "{description}" (Linear: {linear_id})
+    Decompose into a sequenced subtask list with dependencies, risks, execution order.
+    Output: numbered subtask list, max 8 items.
+  expected_output: >
+    Numbered subtask list. Each item: what, why, dependency. No prose padding.
+  agent: planner
+
+architect_task:
+  description: >
+    Task: "{description}"
+    Design technical approach: exact files to create/modify, patterns to follow, edge cases.
+    Output: file-level spec the coder executes without guessing.
+  expected_output: >
+    File list with action per file. Patterns to use. Edge cases. No prose.
+  agent: architect
+  context: [plan_task]
+
+code_task:
+  description: >
+    Task: "{description}"
+    PROJECT STRUCTURE: {project_context}
+    Write the implementation. Output ALL changed files as code blocks.
+    Each code block must have the correct file path (including imports/ prefix) as a comment on the first line.
+    Follow project conventions. Surgical changes only.
+  expected_output: >
+    List of files written with one-line summary each. Full code blocks for each file.
+  agent: coder
+  context: [architect_task]
+
+test_task:
+  skills: [e2e-tests]
+  skill_sections:
+    e2e-tests:
+      - "Test Type Classification"
+      - "Action Sandwich Pattern"
+      - "POM Component Guidelines"
+      - "Branch Scan Checklist"
+  rules: [e2e-standards]
+  commands: [testing/review-my-branch-e2e]
+  description: >
+    Task: "{description}"
+    PROJECT STRUCTURE: {project_context}
+    Write Playwright tests for the feature implemented in context.
+    Step 1 — Classify: decide visual (component states, layout, rendering) vs functional
+    (user flows, interactions, state transitions) for each test. Both types may be needed.
+    Step 2 — Write tests:
+    - Visual: tests/playwright/integration/visual/{{featureName}}_{{scenario}}.ts
+    - Functional: tests/playwright/integration/{{featureName}}_{{behavior}}_spec.ts
+    - POM components (when needed): tests/playwright/support/components/
+    Generate all test data via generateData in DB — never create via UI.
+    Apply Action Sandwich pattern to every action (assert before, act, assert after).
+    Step 3 — Self-review: check your output against the Branch Scan Checklist in the
+    PROJECT CONVENTIONS below. Fix all violations before outputting.
+    Output each file as a code block with the full path as a comment on the first line.
+  expected_output: >
+    All test files and POM components as code blocks. Branch Scan self-review summary at end.
+  agent: tester
+  context: [code_task]
+
+review_task:
+  description: >
+    Task: "{description}"
+    Review every file changed in this task based on context.
+    Flag: logic errors, null refs, missing guards, security gaps, perf issues, convention violations.
+    Format each comment as: line number, emoji, type, issue, suggested fix.
+  expected_output: >
+    Inline review comments. PASS or list of required fixes.
+  agent: pr_reviewer
+  context: [code_task, test_task]
+
+standards_task:
+  description: >
+    Task: "{description}" (Linear: {linear_id})
+    Check that all project conventions are met based on context.
+    Verify every requirement from the original task is addressed.
+  expected_output: >
+    APPROVED or list of gaps. Each gap: requirement, what is missing, fix needed.
+  agent: standards_guardian
+  context: [plan_task, review_task]
+
+git_task:
+  skills: [github-pull-requests]
+  description: >
+    Branch: {branch} Task: {task_id} Linear: {linear_id}
+    Based on the full implementation context, generate the final git artifacts.
+    Output EXACTLY in this format, nothing else:
+    COMMIT_MSG: <emoji> [{linear_id}] Sentence-case subject (max 72 chars total)
+    PR_TITLE: <same as COMMIT_MSG>
+    PR_BODY: <markdown: 2-3 line summary, blank line, "## Files changed" section listing files, blank line, "🤖 Auto-generated draft — review before merging.">
+    FILES: <comma-separated relative paths of all changed files>
+    DONE: yes
+    Allowed emojis: ⭐️ feature, 🐞 bug, ✅ test, ♻️ refactor, 🚨 hotfix, 📓 docs, 🛠 chore.
+  expected_output: >
+    COMMIT_MSG, PR_TITLE, PR_BODY, FILES, DONE. No extra prose.
+  agent: git_expert
+  context: [standards_task]
