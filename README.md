@@ -19,7 +19,22 @@ git preflight → planner → architect → coder → tester → reviewer → st
 - Each agent runs on **Groq** (LLaMA 3.3 70B — fast, free tier available)
 - Agents have **no tools** — all output is plain text / fenced code blocks
 - The runner extracts code blocks, writes files, stages them, and opens a **draft PR** via `gh`
-- Skills, rules, and commands are loaded from your project's `.cursor/` folder — the crew inherits your project's own conventions automatically
+- The crew is fully aware of your project's `.cursor/` folder — skills, rules, commands, and agent definitions are automatically loaded and injected into the right agents at runtime
+
+---
+
+## .cursor awareness
+
+If your project uses [Cursor](https://cursor.sh) with a `.cursor/` folder, the orchestrator inherits everything from it automatically — no extra config needed.
+
+| `.cursor/` folder | What happens |
+|---|---|
+| `rules/` | Injected per-agent based on role (e.g. `clean-code` → coder, `e2e-standards` → tester) |
+| `skills/` | Index injected into planner so it knows what skills exist; full content injected into relevant tasks by keyword matching |
+| `commands/` | Listed as available commands for agents that execute CLI tools |
+| `agents/` | Specialist context files (e.g. `mongodb-specialist.md`) injected when description keywords match |
+
+Projects without a `.cursor/` folder work fine — agents just run without project-specific conventions.
 
 ---
 
@@ -29,7 +44,7 @@ Before setup, make sure you have:
 
 | Requirement | Check / Install |
 |---|---|
-| Python 3.11+ | `python3 --version` |
+| Python 3.10+ | `python3 --version` |
 | Git configured | `git config --global user.name` |
 | `gh` CLI installed + authenticated | `gh auth status` — [install](https://cli.github.com) |
 | Groq API key (free) | [console.groq.com](https://console.groq.com) → API Keys |
@@ -80,6 +95,32 @@ cp projects.yaml.template projects.yaml
 
 ---
 
+## Cursor MCP integration
+
+To dispatch tasks directly from Cursor without leaving the editor, add this to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "crew-orchestrator": {
+      "command": "/path/to/crew-orchestrator/.venv/bin/python3",
+      "args": ["/path/to/crew-orchestrator/mcp_server.py"]
+    }
+  }
+}
+```
+
+Replace `/path/to/crew-orchestrator` with your actual install path (default: `~/crew-orchestrator`).
+
+After restarting Cursor, the agent chat has access to:
+
+- `start_task` — dispatch a task to the crew
+- `task_status` — check status of a running task
+- `where_are_changes` — find which branch contains changes for a task
+- `improve_orchestrator` — trigger a retrospective run
+
+---
+
 ## projects.yaml
 
 The minimal config — just a name and a path:
@@ -90,7 +131,16 @@ projects:
     path: /Users/you/dev/my-app
 ```
 
-If your project has a `.cursor/` folder with skills, rules, and commands, the crew will pick them up automatically. Nothing extra to configure.
+Optional: add a `structure_hint` to help agents understand your codebase layout:
+
+```yaml
+projects:
+  my-app:
+    path: /Users/you/dev/my-app
+    structure_hint: >
+      TypeScript/React app. Source files in src/. Components in src/components/.
+      Tests co-located with source files as *.test.ts.
+```
 
 ---
 
@@ -129,7 +179,8 @@ crew-orchestrator/
 ├── tasks.yaml            # task pipeline and skill injection config
 ├── runner.py             # crew execution, file extraction, git
 ├── router.py             # task type inference from description
-├── context_loader.py     # project path resolution
+├── context_loader.py     # .cursor folder scanning and context injection
+├── mcp_server.py         # Cursor MCP integration
 ├── logger.py             # run logging
 ├── registry.py           # branch and task state
 ├── dashboard/
@@ -145,10 +196,12 @@ crew-orchestrator/
 
 ## Troubleshooting
 
-**Server won't start** — check Python version (`python3 --version` must be 3.11+) and that deps are installed (`.venv/bin/pip install -r requirements.txt`).
+**Server won't start** — check Python version (`python3 --version` must be 3.10+) and that deps are installed (`.venv/bin/pip install -r requirements.txt`).
 
 **LLM errors** — run the built-in test: open [http://localhost:8765/api/llm-test](http://localhost:8765/api/llm-test). It will tell you if the Groq key is missing or the API is unreachable.
 
 **PR not created** — make sure `gh` is authenticated (`gh auth status`) and has repo access.
 
-**Skills not loading** — the crew reads skills from your project's `.cursor/skills/` directory. If that folder doesn't exist, agents run without skill context (still works, just less project-aware).
+**Skills not loading** — the crew reads skills from your project's `.cursor/skills/` directory. If that folder doesn't exist, agents run without project-specific conventions (still works).
+
+**MCP not showing in Cursor** — restart Cursor after editing `mcp.json`, and verify the Python path points to the venv (`~/crew-orchestrator/.venv/bin/python3`).
