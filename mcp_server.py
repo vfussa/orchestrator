@@ -28,7 +28,7 @@ def _default_project() -> str:
     return next(iter(cfg["projects"]))
 
 
-def tool_start_task(description: str, task_type: str = None, linear_id: str = None, project: str = None) -> dict:
+def tool_start_task(description: str, task_type: str = None, linear_id: str = None, project: str = None, auto_pr: bool = False) -> dict:
     """Dispatch a task to the crew orchestrator."""
     if not project:
         project = _default_project()
@@ -44,7 +44,7 @@ def tool_start_task(description: str, task_type: str = None, linear_id: str = No
         load_dotenv(Path(__file__).parent / ".env")
         try:
             run_crew(project=project, task_id=task_id, description=description,
-                     task_type=task_type, linear_id=linear_id)
+                     task_type=task_type, linear_id=linear_id, auto_pr=auto_pr)
         except Exception as e:
             run_logger.update_run(project, task_id, outcome=f"error: {e}")
 
@@ -118,6 +118,7 @@ TOOLS = {
                 "task_type": {"type": "string", "enum": ["feature", "bug", "hotfix", "refactor", "test", "docs", "chore"], "description": "Task type (inferred if omitted)"},
                 "linear_id": {"type": "string", "description": "Linear issue ID e.g. P-12345"},
                 "project": {"type": "string", "description": "Project name from projects.yaml (defaults to first project)"},
+                "auto_pr": {"type": "boolean", "description": "Open a draft PR automatically (default: false)"},
             },
             "required": ["description"],
         },
