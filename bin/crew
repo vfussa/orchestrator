@@ -1,0 +1,39 @@
+#!/bin/bash
+# crew — dispatch a task to the crew orchestrator
+# Usage: crew "description" [linear_id] [task_type]
+# Examples:
+#   crew "add loading skeleton to PostList"
+#   crew "fix broken dropdown" P-12345
+#   crew "refactor CalendarNav" "" refactor
+
+set -euo pipefail
+
+DESCRIPTION="${1:-}"
+LINEAR_ID="${2:-}"
+TASK_TYPE="${3:-}"
+HOST="${CREW_HOST:-http://localhost:8765}"
+
+if [ -z "$DESCRIPTION" ]; then
+  echo "Usage: crew \"description\" [linear_id] [task_type]"
+  exit 1
+fi
+
+# Build JSON payload
+PAYLOAD=$(python3 -c "
+import json, sys
+d = {'description': sys.argv[1]}
+if sys.argv[2]: d['linear_id'] = sys.argv[2]
+if sys.argv[3]: d['task_type'] = sys.argv[3]
+print(json.dumps(d))
+" "$DESCRIPTION" "$LINEAR_ID" "$TASK_TYPE")
+
+RESPONSE=$(curl -sf -X POST "$HOST/dispatch" \
+  -H "Content-Type: application/json" \
+  -d "$PAYLOAD")
+
+TASK_ID=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('task_id','?'))")
+
+echo ""
+echo "✅ Dispatched — task: $TASK_ID"
+echo "   Dashboard: $HOST"
+echo ""
