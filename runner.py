@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import yaml
+from collections import defaultdict
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -126,9 +127,14 @@ def _build_task(task_name: str, agent, context_tasks: list, inputs: dict,
     from crewai import Task
     tasks_cfg = _load_yaml(BASE / "tasks.yaml")
     cfg = tasks_cfg[task_name]
-    _fmt = {k: v or "" for k, v in inputs.items()}
-    description = cfg["description"].format(**_fmt)
-    expected_output = cfg["expected_output"].format(**_fmt)
+    # Use defaultdict so any unknown {var} in template becomes "" instead of KeyError.
+    # Second regex pass neutralizes any {var} patterns introduced by substituted values
+    # (e.g. project_context containing {featureName} naming conventions).
+    _fmt = defaultdict(str, {k: v or "" for k, v in inputs.items()})
+    description = re.sub(r'\{(\w+)\}', r'[\1]',
+                         cfg["description"].format_map(_fmt))
+    expected_output = re.sub(r'\{(\w+)\}', r'[\1]',
+                             cfg["expected_output"].format_map(_fmt))
 
     injections = []
 
