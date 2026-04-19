@@ -4,41 +4,30 @@
 import json
 import asyncio
 import sys
+import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, PlainTextResponse
 import uvicorn
 
 from registry import get_all_projects_summary
-from logger import list_runs, count_runs, get_output
-
-VERSION = "0.0.1"
-
-
-def get_version() -> str:
-    """Compute version from git: 0.0.{commit_count} ({short_hash})"""
-    import subprocess
-    try:
-        repo = Path(__file__).parent.parent
-        count = subprocess.check_output(
-            ["git", "rev-list", "--count", "HEAD"],
-            cwd=repo, stderr=subprocess.DEVNULL
-        ).decode().strip()
-        sha = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=repo, stderr=subprocess.DEVNULL
-        ).decode().strip()
-        return f"0.0.{count} ({sha})"
-    except Exception:
-        return "0.0.0"
+from logger import list_runs, count_runs
 
 app = FastAPI()
 connected_clients: list[WebSocket] = []
+
+# In-memory per-task logs — cleared automatically on server restart
+_task_logs: dict[str, list[str]] = {}
+
+
+def _append_log(task_id: str, line: str):
+    if task_id not in _task_logs:
+        _task_logs[task_id] = []
+    _task_logs[task_id].append(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {line}")
 
 
 async def broadcast(data: dict):
@@ -81,6 +70,23 @@ async def get_runs(project: str, limit: int = 20):
     return list_runs(project, limit=limit)
 
 
+@app.get("/api/runs/{project}/{task_id}/output")
+async def get_task_output(project: str, task_id: str):
+    lines = _task_logs.get(task_id)
+    if lines:
+        return {"output": "\n".join(lines)}
+    return {"output": "(no logs — logs are in-memory and clear on server restart)"}
+
+
+@app.get("/api/runs/{project}/{task_id}/output/download")
+async def download_task_output(project: str, task_id: str):
+    lines = _task_logs.get(task_id, [])
+    content = "\n".join(lines) if lines else "(no logs)"
+    return PlainTextResponse(content, headers={
+        "Content-Disposition": f"attachment; filename={task_id}.txt"
+    })
+
+
 @app.post("/dispatch")
 async def dispatch(body: dict):
     """HTTP dispatch endpoint — used by Claude mobile and Cloudflare tunnel."""
@@ -90,17 +96,28 @@ async def dispatch(body: dict):
     task_id = body.get("linear_id") or datetime.now(timezone.utc).strftime('%m%d-%H%M%S')
 
     def _run():
+        _append_log(task_id, f"Task dispatched: {body.get('description', '')}")
+        _append_log(task_id, f"Project: {project} | Type: {body.get('task_type', 'auto')}")
         try:
-            run_crew(
+            result = run_crew(
                 project=project,
                 task_id=task_id,
                 description=body["description"],
                 task_type=body.get("task_type"),
                 linear_id=body.get("linear_id"),
+                auto_pr=body.get("auto_pr", False),
             )
+            _append_log(task_id, f"Crew complete — outcome: {result.get('pr_url') and 'draft_pr_created' or 'awaiting-review'}")
+            if result.get("staged_files"):
+                for f in result["staged_files"]:
+                    _append_log(task_id, f"  staged: {f}")
+            if result.get("pr_url"):
+                _append_log(task_id, f"PR: {result['pr_url']}")
             asyncio.run(broadcast({"type": "run_complete", "task_id": task_id}))
         except Exception as e:
             import traceback as _tb
+            _append_log(task_id, f"ERROR: {e}")
+            _append_log(task_id, _tb.format_exc())
             print(f"Runner error [{task_id}]: {e}")
             _tb.print_exc()
             try:
@@ -111,7 +128,7 @@ async def dispatch(body: dict):
             try:
                 from registry import upsert_branch
                 upsert_branch(project, task_id, branch=f"error/{task_id}", task_type="error",
-                              description=body.get("description",""), status="error")
+                              description=body.get("description", ""), status="error")
             except Exception:
                 pass
 
@@ -171,7 +188,6 @@ async def apply_changes():
     return {"applied": applied}
 
 
-
 @app.post("/api/shell")
 async def run_shell(body: dict):
     """Run a trusted maintenance command in the crew-orchestrator directory.
@@ -196,19 +212,25 @@ async def run_shell(body: dict):
 
 @app.post("/api/restart")
 async def restart_server():
-    """Restart via a wrapper script — avoids port-binding race condition."""
-    import subprocess, os
-    pid = os.getpid()
-    venv_py = str(Path(__file__).parent.parent / ".venv/bin/python3")
-    srv = str(Path(__file__))
-    with open("/tmp/crew-restart.sh", "w") as f:
-        f.write("#!/bin/bash\n")
-        f.write("kill %d\n" % pid)
-        f.write("while lsof -ti:8765 > /dev/null 2>&1; do sleep 0.3; done\n")
-        f.write("nohup %s %s > /tmp/crew-server.log 2>&1 &\n" % (venv_py, srv))
-    os.chmod("/tmp/crew-restart.sh", 0o755)
-    subprocess.Popen(["bash", "/tmp/crew-restart.sh"], start_new_session=True)
+    """Restart the dashboard server itself via a detached subprocess."""
+    import subprocess, sys, os, signal
+    orch = Path(__file__).parent.parent
+    venv_python = orch / ".venv/bin/python3"
+    server_script = Path(__file__)
+    # Launch new server, then kill self
+    subprocess.Popen(
+        [str(venv_python), str(server_script)],
+        cwd=str(orch),
+        start_new_session=True,
+        stdout=open("/tmp/crew-server.log", "w"),
+        stderr=subprocess.STDOUT,
+    )
+    async def _kill():
+        await asyncio.sleep(1)
+        os.kill(os.getpid(), signal.SIGTERM)
+    asyncio.create_task(_kill())
     return {"status": "restarting"}
+
 
 @app.post("/api/reset")
 async def reset_orchestrator():
@@ -221,8 +243,111 @@ async def reset_orchestrator():
         f.unlink(missing_ok=True)
     for f in (orch / "runs").glob("**/*.json"):
         f.unlink(missing_ok=True)
+    _task_logs.clear()
     await broadcast({"type": "state", "data": _get_state()})
     return {"status": "reset"}
+
+
+@app.post("/api/cancel/{project}/{task_id}")
+async def cancel_task(project: str, task_id: str):
+    from registry import upsert_branch, get_branch
+    b = get_branch(project, task_id)
+    if b:
+        upsert_branch(project, task_id, branch=b.get("branch", ""), task_type=b.get("task_type", ""),
+                      description=b.get("description", ""), status="cancelled")
+    _append_log(task_id, "Task cancelled by user")
+    await broadcast({"type": "state", "data": _get_state()})
+    return {"status": "cancelled"}
+
+
+@app.post("/api/cancel/{project}/{task_id}/logs")
+async def cancel_task_with_logs(project: str, task_id: str):
+    from registry import upsert_branch, get_branch
+    b = get_branch(project, task_id)
+    if b:
+        upsert_branch(project, task_id, branch=b.get("branch", ""), task_type=b.get("task_type", ""),
+                      description=b.get("description", ""), status="cancelled")
+    _task_logs.pop(task_id, None)
+    await broadcast({"type": "state", "data": _get_state()})
+    return {"status": "cancelled_with_logs"}
+
+
+@app.post("/api/cancel-all")
+async def cancel_all():
+    import subprocess
+    subprocess.run(["pkill", "-f", "crew-orchestrator/runner.py"], capture_output=True)
+    await broadcast({"type": "state", "data": _get_state()})
+    return {"status": "cancelled_all"}
+
+
+@app.post("/api/revise/{project}/{task_id}")
+async def revise_task(project: str, task_id: str, body: dict):
+    from runner import run_revision
+    import threading
+
+    def _run():
+        try:
+            result = run_revision(project=project, task_id=task_id, feedback=body.get("feedback", ""))
+            asyncio.run(broadcast({"type": "revision_complete", "task_id": task_id, "result": result}))
+        except Exception as e:
+            asyncio.run(broadcast({"type": "revision_failed", "task_id": task_id, "error": str(e)}))
+
+    threading.Thread(target=_run, daemon=True).start()
+    asyncio.create_task(broadcast({"type": "revision_started", "task_id": task_id}))
+    return {"status": "revision_started"}
+
+
+@app.post("/api/commit/{project}/{task_id}")
+async def commit_task(project: str, task_id: str, body: dict):
+    """Commit staged files for a task and push."""
+    from registry import get_branch, upsert_branch
+    import subprocess
+    b = get_branch(project, task_id)
+    if not b:
+        return {"error": "task not found"}
+    staged = b.get("staged_files", [])
+    branch = b.get("branch", "")
+    description = b.get("description", "")
+    task_type = b.get("task_type", "chore")
+
+    from runner import resolve_project_path
+    root = Path(resolve_project_path(project)).expanduser()
+    cwd = str(root)
+
+    def run(cmd):
+        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+
+    run(["git", "checkout", "-b", branch])
+    for f in staged:
+        run(["git", "add", f])
+    msg = f"{task_type}: {description[:60]}"
+    run(["git", "commit", "-m", msg])
+    push = run(["git", "push", "-u", "origin", branch])
+
+    pr_result = run(["gh", "pr", "create", "--title", f"{description[:60]} [{task_id}]",
+                     "--body", f"Task: {description}\n\nFiles:\n" + "\n".join(f"- {f}" for f in staged),
+                     "--draft", "--head", branch])
+    pr_url = pr_result.stdout.strip() if pr_result.returncode == 0 else None
+    upsert_branch(project, task_id, branch=branch, task_type=task_type,
+                  description=description, status="draft_pr_created", pr_url=pr_url)
+    return {"pr_url": pr_url, "error": pr_result.stderr if not pr_url else None}
+
+
+@app.post("/api/chat/{project}/{task_id}")
+async def chat_task(project: str, task_id: str, body: dict):
+    from registry import get_branch, _load, _save
+    message = body.get("message", "")
+    role = body.get("role", "user")
+    data = _load(project)
+    if task_id in data:
+        if "messages" not in data[task_id]:
+            data[task_id]["messages"] = []
+        data[task_id]["messages"].append({
+            "role": role, "content": message,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        _save(project, data)
+    return {"status": "ok"}
 
 
 @app.get("/status/{task_id}")
@@ -247,12 +372,33 @@ def _default_project() -> str:
     return next(iter(cfg["projects"]))
 
 
+def _get_version() -> str:
+    try:
+        orch = Path(__file__).parent.parent
+        count = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD"],
+            cwd=str(orch), capture_output=True, text=True
+        ).stdout.strip()
+        sha = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(orch), capture_output=True, text=True
+        ).stdout.strip()
+        return f"0.0.{count} ({sha})"
+    except Exception:
+        return "0.0.0"
+
+
 def _get_state() -> dict:
     branches = get_all_projects_summary()
     all_runs = {}
     for project in branches:
         all_runs[project] = list_runs(project, limit=20)
-    return {"branches": branches, "runs": all_runs, "version": VERSION, "timestamp": datetime.now(timezone.utc).isoformat(), "version": get_version()}
+    return {
+        "branches": branches,
+        "runs": all_runs,
+        "version": _get_version(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 # Push state updates every 5 seconds
@@ -263,35 +409,9 @@ async def periodic_push():
             await broadcast({"type": "state", "data": _get_state()})
 
 
-
-async def _clear_stale_runs():
-    """On startup, mark any runs still in_progress as failed (server was restarted)."""
-    import yaml
-    from datetime import datetime, timezone
-    import logger as run_logger
-    try:
-        cfg = yaml.safe_load((Path(__file__).parent.parent / "projects.yaml").read_text())
-        for project in cfg["projects"]:
-            for run in run_logger.list_runs(project, limit=100):
-                if run.get("outcome") == "in_progress" or (run.get("outcome") and "error" in run["outcome"] and not run.get("completed_at")):
-                    run_logger.update_run(project, run["task_id"],
-                        outcome="error: server restarted — task was interrupted",
-                        completed_at=datetime.now(timezone.utc).isoformat())
-        # Also clear the registry entry so dashboard doesn't show zombie
-        try:
-            from registry import _registry_path
-            rp = _registry_path(project, run["task_id"])
-            if rp.exists():
-                rp.unlink()
-        except Exception:
-            pass
-    except Exception as e:
-        print(f"[startup] stale run cleanup: {e}")
-
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(periodic_push())
-    await _clear_stale_runs()
 
 
 if __name__ == "__main__":

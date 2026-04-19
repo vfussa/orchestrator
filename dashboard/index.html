@@ -59,6 +59,32 @@
     font-size: 12px; color: var(--muted);
   }
   .stat-pill strong { color: var(--text); }
+  .stat-pill-btn {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 20px;
+    background: var(--surface2); border: 1px solid var(--border);
+    font-size: 12px; color: var(--muted);
+    cursor: pointer; position: relative;
+  }
+  .stat-pill-btn:hover { background: var(--border); border-color: var(--blue); }
+  .stat-pill-btn strong { color: var(--text); }
+  /* Token popover */
+  .tok-popover {
+    display: none; position: absolute; top: calc(100% + 8px); left: 0;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; min-width: 240px; z-index: 500;
+    box-shadow: 0 8px 24px rgba(0,0,0,.5);
+  }
+  .tok-popover.open { display: block; }
+  .tok-pop-title { font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted); margin-bottom: 8px; }
+  .tok-pop-row { display: flex; justify-content: space-between; align-items: center;
+    padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 11px; }
+  .tok-pop-row:last-child { border-bottom: none; }
+  .tok-pop-id { color: var(--muted); font-family: var(--mono); }
+  .tok-pop-val { color: var(--text); font-weight: 600; }
+  .tok-pop-total { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
+    display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; }
   .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
   .dot.pulse { animation: pulse 2s infinite; }
   @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.3;} }
@@ -382,8 +408,14 @@
   <div class="topbar-left">
     <div class="logo">crew<span>.</span>orchestrator <span id="app-version" style="font-size:10px;font-weight:400;color:var(--muted);margin-left:2px"></span></div>
     <div class="stat-pill"><span class="conn-dot" id="conn-dot"></span> <span id="stat-running">connecting…</span></div>
-    <div class="stat-pill">Today: <strong id="stat-tokens">0 tok</strong></div>
-    <div class="stat-pill" id="stat-project" style="display:none"></div>
+    <div class="stat-pill-btn" id="tok-pill" onclick="toggleTokPopover()">
+      Today: <strong id="stat-tokens">0 tok</strong>
+      <div class="tok-popover" id="tok-popover">
+        <div class="tok-pop-title">Token breakdown</div>
+        <div id="tok-pop-rows"><div style="color:var(--muted);font-size:11px;">No data yet</div></div>
+      </div>
+    </div>
+    <div class="stat-pill" id="stat-project" style="display:none" title="Multi-repo support coming soon"></div>
   </div>
   <div class="topbar-right">
     <button class="btn" id="state-btn" onclick="toggleStatePanel()">{ } State</button>
@@ -478,6 +510,10 @@
         <div class="retro-stat">
           <span class="retro-label">Avg duration</span>
           <span class="retro-val" id="retro-avg">—</span>
+        </div>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px;">By status</div>
+          <div id="retro-status-breakdown"></div>
         </div>
       </div>
       <button class="btn" style="width:100%;margin-top:10px;font-size:11px;" onclick="triggerRetro()">Run Retrospective Now</button>
@@ -599,6 +635,22 @@ function renderAll(data) {
   document.getElementById('stat-tokens').textContent = totalTok.toLocaleString() + ' tok';
   document.getElementById('badge-tokens-total').textContent = totalTok.toLocaleString() + ' total';
 
+  // Token popover per-task breakdown
+  const popRows = document.getElementById('tok-pop-rows');
+  if (popRows) {
+    const taskToks = todayRuns
+      .map(r => ({ id: r.task_id, tok: Object.values(r.token_usage || {}).reduce((s, v) => s + (v.input || 0) + (v.output || 0), 0) }))
+      .filter(x => x.tok > 0)
+      .sort((a, b) => b.tok - a.tok);
+    if (taskToks.length) {
+      popRows.innerHTML = taskToks.map(x =>
+        `<div class="tok-pop-row"><span class="tok-pop-id">${esc(x.id)}</span><span class="tok-pop-val">${x.tok.toLocaleString()}</span></div>`
+      ).join('') + `<div class="tok-pop-total"><span>Total today</span><span>${totalTok.toLocaleString()} tok</span></div>`;
+    } else {
+      popRows.innerHTML = '<div style="color:var(--muted);font-size:11px;">No data yet</div>';
+    }
+  }
+
   // Version badge
   if (data.version) {
     const vEl = document.getElementById('app-version');
@@ -613,7 +665,7 @@ function renderAll(data) {
   const projEl = document.getElementById('stat-project');
   if (projects.length) {
     projEl.style.display = '';
-    projEl.textContent = projects.join(', ');
+    projEl.textContent = 'repo: ' + projects.join(', ');
   }
 
   renderActiveCrews(running, runByTask);
@@ -816,8 +868,11 @@ function renderCompleted(completedToday) {
   el.innerHTML = completedToday.map(r => {
     const tokens = Object.values(r.token_usage || {}).reduce((s, v) => s + (v.input || 0) + (v.output || 0), 0);
     const dur = r.duration_seconds ? fmtDuration(r.duration_seconds) : '—';
-    return `<div class="done-row">
-      <span class="done-check">✓</span>
+    const isSuccess = ['awaiting-review', 'draft_pr_created', 'completed'].includes(r.outcome);
+    const isError = (r.outcome || '').startsWith('error') || r.outcome === 'cancelled';
+    const icon = isSuccess ? '✅' : isError ? '❌' : '⚪';
+    return `<div class="done-row" onclick="viewOutput('${esc(r.project || '')}','${esc(r.task_id)}')" style="cursor:pointer;">
+      <span class="done-check">${icon}</span>
       <span class="done-id">${esc(r.task_id)}</span>
       <span class="done-desc">${esc(r.description)}</span>
       <span class="done-meta">${dur} · ${tokens.toLocaleString()} tok</span>
@@ -835,31 +890,39 @@ function renderCost(todayRuns, grandTotal) {
     return;
   }
 
-  // Aggregate by agent
-  const byAgent = {};
-  todayRuns.forEach(r => {
-    Object.entries(r.token_usage || {}).forEach(([agent, v]) => {
-      byAgent[agent] = (byAgent[agent] || 0) + (v.input || 0) + (v.output || 0);
-    });
-  });
+  // Per-task breakdown
+  const taskRows = todayRuns
+    .map((r, i) => {
+      const tok = Object.values(r.token_usage || {}).reduce((s, v) => s + (v.input || 0) + (v.output || 0), 0);
+      return { id: r.task_id, desc: r.description, tok, i };
+    })
+    .filter(x => x.tok > 0)
+    .sort((a, b) => b.tok - a.tok);
 
-  const sorted = Object.entries(byAgent).sort((a, b) => b[1] - a[1]);
-  const max = sorted[0]?.[1] || 1;
+  const max = taskRows[0]?.tok || 1;
 
-  el.innerHTML = sorted.map(([agent, count], i) => {
-    const pct = Math.round((count / max) * 100);
+  const rowsHtml = taskRows.map(({ id, desc, tok, i }) => {
+    const pct = Math.round((tok / grandTotal) * 100);
+    const barPct = Math.round((tok / max) * 100);
     const color = AGENT_COLORS[i % AGENT_COLORS.length];
-    const label = agent.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
-    return `<div class="cost-row">
-      <span class="cost-label">${esc(label)}</span>
+    return `<div class="cost-row" style="cursor:pointer;" onclick="viewOutput('',${JSON.stringify(id)})">
+      <span class="cost-label" style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(desc)}">${esc(id)}</span>
       <div class="cost-bar-wrap">
-        <div class="cost-bar" style="width:${pct}%;background:${color};">
-          <span>${count.toLocaleString()}</span>
+        <div class="cost-bar" style="width:${barPct}%;background:${color};">
+          <span>${tok.toLocaleString()}</span>
         </div>
       </div>
-      <span class="cost-val">${count.toLocaleString()}</span>
+      <span class="cost-val" style="color:var(--muted);font-size:10px;">${pct}%</span>
     </div>`;
   }).join('');
+
+  const totalRow = `<div class="cost-row" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-weight:600;">
+    <span class="cost-label">Total</span>
+    <div class="cost-bar-wrap"></div>
+    <span class="cost-val">${grandTotal.toLocaleString()}</span>
+  </div>`;
+
+  el.innerHTML = rowsHtml + totalRow;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -873,6 +936,34 @@ function renderRetro(allRuns, completedToday) {
   if (withDur.length) {
     const avg = Math.round(withDur.reduce((s, r) => s + r.duration_seconds, 0) / withDur.length);
     document.getElementById('retro-avg').textContent = fmtDuration(avg);
+  }
+
+  // Status breakdown
+  const STATUS_LABELS = {
+    'in_progress': { label: 'Running', color: 'var(--blue)' },
+    'awaiting-review': { label: 'Awaiting review', color: 'var(--green)' },
+    'draft_pr_created': { label: 'PR created', color: 'var(--purple)' },
+    'completed': { label: 'Completed', color: 'var(--green)' },
+    'cancelled': { label: 'Cancelled', color: 'var(--muted)' },
+  };
+  const counts = {};
+  allRuns.forEach(r => {
+    const key = (r.outcome || '').startsWith('error') ? 'error' : (r.outcome || 'unknown');
+    counts[key] = (counts[key] || 0) + 1;
+  });
+  const brkEl = document.getElementById('retro-status-breakdown');
+  if (brkEl) {
+    if (!Object.keys(counts).length) {
+      brkEl.innerHTML = '<span style="color:var(--muted);font-size:11px;">No runs yet</span>';
+    } else {
+      brkEl.innerHTML = Object.entries(counts).map(([status, n]) => {
+        const cfg = STATUS_LABELS[status] || { label: status, color: 'var(--yellow)' };
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;font-size:11px;">
+          <span style="color:${cfg.color};">● ${cfg.label}</span>
+          <span style="font-weight:600;color:var(--text);">${n}</span>
+        </div>`;
+      }).join('');
+    }
   }
 }
 
@@ -1356,11 +1447,40 @@ function showToast(msg, err = false) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Token popover toggle
+// ─────────────────────────────────────────────────────────────────────────────
+function toggleTokPopover() {
+  const pop = document.getElementById('tok-popover');
+  if (!pop) return;
+  pop.classList.toggle('open');
+  if (pop.classList.contains('open')) {
+    // Close on outside click
+    setTimeout(() => {
+      document.addEventListener('click', function _close(e) {
+        if (!document.getElementById('tok-pill')?.contains(e.target)) {
+          pop.classList.remove('open');
+          document.removeEventListener('click', _close);
+        }
+      });
+    }, 0);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Output viewer modal
 // ─────────────────────────────────────────────────────────────────────────────
 function viewOutput(project, taskId) {
   const existing = document.getElementById('output-modal');
   if (existing) existing.remove();
+
+  // Resolve project from lastState if not provided
+  if (!project && lastState) {
+    const allRuns = Object.entries(lastState.runs || {});
+    for (const [proj, runs] of allRuns) {
+      if (runs.some(r => r.task_id === taskId)) { project = proj; break; }
+    }
+  }
+  const proj = project || _default_project_guess();
 
   const modal = document.createElement('div');
   modal.id = 'output-modal';
@@ -1368,15 +1488,20 @@ function viewOutput(project, taskId) {
   modal.innerHTML = `
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;width:100%;max-width:860px;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border);">
-        <span style="font-weight:600;font-size:13px;">📄 Output — ${esc(taskId)}</span>
-        <button onclick="document.getElementById('output-modal').remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;line-height:1;">✕</button>
+        <span style="font-weight:600;font-size:13px;">📄 Logs — ${esc(taskId)}</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <a id="output-dl-btn" href="/api/runs/${encodeURIComponent(proj)}/${encodeURIComponent(taskId)}/output/download"
+             download="${esc(taskId)}.txt"
+             style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:500;cursor:pointer;border:1px solid var(--border);background:var(--surface2);color:var(--text);text-decoration:none;">⬇ Download</a>
+          <button onclick="document.getElementById('output-modal').remove()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;line-height:1;">✕</button>
+        </div>
       </div>
       <div id="output-body" style="padding:16px 18px;overflow-y:auto;flex:1;font-family:var(--mono);font-size:12px;line-height:1.6;white-space:pre-wrap;color:var(--text);">Loading…</div>
     </div>`;
   modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
   document.body.appendChild(modal);
 
-  fetch(`/api/runs/${encodeURIComponent(project)}/${encodeURIComponent(taskId)}/output`)
+  fetch(`/api/runs/${encodeURIComponent(proj)}/${encodeURIComponent(taskId)}/output`)
     .then(r => r.json())
     .then(d => {
       document.getElementById('output-body').textContent = d.output || d.message || '(no output saved)';
@@ -1384,6 +1509,11 @@ function viewOutput(project, taskId) {
     .catch(e => {
       document.getElementById('output-body').textContent = `Error: ${e}`;
     });
+}
+
+function _default_project_guess() {
+  if (!lastState) return 'planable-app';
+  return Object.keys(lastState.branches || {})[0] || 'planable-app';
 }
 </script>
 
