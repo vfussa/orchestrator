@@ -340,8 +340,13 @@ def run_crew(
                         callback=make_step_callback(agent_name))
         built_tasks.append(t)
 
+    # Wrap inputs so any unknown {var} in task templates resolves to "" instead of raising.
+    class _SafeInputs(dict):
+        def __missing__(self, key):
+            return ""
+
     crew = Crew(agents=list(agent_map.values()), tasks=built_tasks, process=Process.sequential, verbose=True)
-    result = crew.kickoff(inputs=inputs)
+    result = crew.kickoff(inputs=_SafeInputs(inputs))
 
     task_outputs = [str(t.output) for t in built_tasks if hasattr(t, "output") and t.output]
 
