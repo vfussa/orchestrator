@@ -18,6 +18,17 @@ import logger as run_logger
 
 load_dotenv(Path(__file__).parent / ".env")
 
+# Patch CrewAI's interpolate_only so unknown template vars (e.g. {featureName} in
+# skill docs) silently become "" instead of crashing with KeyError.
+try:
+    import crewai.utilities.string_utils as _su
+    _orig_interpolate = _su.interpolate_only
+    def _safe_interpolate(text, inputs, *a, **kw):
+        return _orig_interpolate(text, defaultdict(str, inputs), *a, **kw)
+    _su.interpolate_only = _safe_interpolate
+except Exception:
+    pass
+
 BASE = Path(__file__).parent
 CAVEMAN_PROMPT = (
     "Terse like caveman. Technical substance exact. Only fluff die. "
@@ -340,13 +351,8 @@ def run_crew(
                         callback=make_step_callback(agent_name))
         built_tasks.append(t)
 
-    # Wrap inputs so any unknown {var} in task templates resolves to "" instead of raising.
-    class _SafeInputs(dict):
-        def __missing__(self, key):
-            return ""
-
     crew = Crew(agents=list(agent_map.values()), tasks=built_tasks, process=Process.sequential, verbose=True)
-    result = crew.kickoff(inputs=_SafeInputs(inputs))
+    result = crew.kickoff(inputs=inputs)
 
     task_outputs = [str(t.output) for t in built_tasks if hasattr(t, "output") and t.output]
 
