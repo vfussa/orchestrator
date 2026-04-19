@@ -183,23 +183,21 @@ async def run_shell(body: dict):
 
 @app.post("/api/restart")
 async def restart_server():
-    """Restart via an external wrapper that waits for port 8765 to free before starting new process."""
-    import subprocess, os
-    venv_python = str(Path(__file__).parent.parent / '.venv/bin/python3')
-    server_script = str(Path(__file__))
-    pid = os.getpid()
-    wrapper = '
-'.join([
-        '#!/bin/bash',
-        f'kill {pid}',
-        'for i in $(seq 1 20); do sleep 0.5; ! lsof -ti:8765 > /dev/null 2>&1 && break; done',
-        f'nohup {venv_python} {server_script} > /tmp/crew-server.log 2>&1 &',
-        '',
-    ])
-    with open('/tmp/crew-restart.sh', 'w') as f:
-        f.write(wrapper)
-    os.chmod('/tmp/crew-restart.sh', 0o755)
-    subprocess.Popen(['bash', '/tmp/crew-restart.sh'], start_new_session=True)
+    """Restart the dashboard server itself via a detached subprocess."""
+    import subprocess, os, signal
+    orch = Path(__file__).parent.parent
+    venv_python = orch / ".venv/bin/python3"
+    subprocess.Popen(
+        [str(venv_python), str(Path(__file__))],
+        cwd=str(orch),
+        start_new_session=True,
+        stdout=open("/tmp/crew-server.log", "w"),
+        stderr=subprocess.STDOUT,
+    )
+    async def _kill():
+        await asyncio.sleep(1)
+        os.kill(os.getpid(), signal.SIGTERM)
+    asyncio.create_task(_kill())
     return {"status": "restarting"}
 
 @app.post("/api/reset")
