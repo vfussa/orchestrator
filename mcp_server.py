@@ -35,7 +35,7 @@ def tool_start_task(description: str, task_type: str = None, linear_id: str = No
     if not task_type:
         task_type = infer_task_type(description)
 
-    task_id = linear_id or f"TASK-{datetime.now(timezone.utc).strftime('%H%M%S')}"
+    task_id = linear_id or datetime.now(timezone.utc).strftime('%m%d-%H%M%S')
 
     # Run crew in a background thread so MCP doesn't block
     def _run():

@@ -69,7 +69,7 @@ async def dispatch(body: dict):
     from runner import run_crew
     import threading
     project = body.get("project") or _default_project()
-    task_id = body.get("linear_id") or f"TASK-{datetime.now(timezone.utc).strftime('%H%M%S')}"
+    task_id = body.get("linear_id") or datetime.now(timezone.utc).strftime('%m%d-%H%M%S')
 
     def _run():
         try:
