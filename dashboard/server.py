@@ -267,6 +267,14 @@ async def _clear_stale_runs():
                     run_logger.update_run(project, run["task_id"],
                         outcome="error: server restarted — task was interrupted",
                         completed_at=datetime.now(timezone.utc).isoformat())
+        # Also clear the registry entry so dashboard doesn't show zombie
+        try:
+            from registry import _registry_path
+            rp = _registry_path(project, run["task_id"])
+            if rp.exists():
+                rp.unlink()
+        except Exception:
+            pass
     except Exception as e:
         print(f"[startup] stale run cleanup: {e}")
 
