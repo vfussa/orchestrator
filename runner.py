@@ -20,12 +20,15 @@ load_dotenv(Path(__file__).parent / ".env")
 
 # Patch CrewAI's interpolate_only so unknown template vars (e.g. {featureName} in
 # skill docs) silently become "" instead of crashing with KeyError.
+# Must patch both the module AND crewai.task's local binding (imported via `from ... import`).
 try:
     import crewai.utilities.string_utils as _su
+    import crewai.task as _ct
     _orig_interpolate = _su.interpolate_only
     def _safe_interpolate(text, inputs, *a, **kw):
         return _orig_interpolate(text, defaultdict(str, inputs), *a, **kw)
     _su.interpolate_only = _safe_interpolate
+    _ct.interpolate_only = _safe_interpolate
 except Exception:
     pass
 
