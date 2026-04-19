@@ -158,6 +158,48 @@ async def apply_changes():
     return {"applied": applied}
 
 
+
+@app.post("/api/shell")
+async def run_shell(body: dict):
+    """Run a trusted maintenance command in the crew-orchestrator directory.
+    Localhost-only — never expose this server to the public internet."""
+    import subprocess
+    script = body.get("script", "")
+    if not script:
+        return {"error": "no script provided"}
+    orch = Path(__file__).parent.parent
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True, text=True,
+        cwd=str(orch), timeout=120
+    )
+    return {
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "returncode": result.returncode,
+        "ok": result.returncode == 0,
+    }
+
+
+@app.post("/api/restart")
+async def restart_server():
+    """Restart the dashboard server itself via a detached subprocess."""
+    import subprocess, os, signal
+    orch = Path(__file__).parent.parent
+    venv_python = orch / ".venv/bin/python3"
+    subprocess.Popen(
+        [str(venv_python), str(Path(__file__))],
+        cwd=str(orch),
+        start_new_session=True,
+        stdout=open("/tmp/crew-server.log", "w"),
+        stderr=subprocess.STDOUT,
+    )
+    async def _kill():
+        await asyncio.sleep(1)
+        os.kill(os.getpid(), signal.SIGTERM)
+    asyncio.create_task(_kill())
+    return {"status": "restarting"}
+
 @app.post("/api/reset")
 async def reset_orchestrator():
     """Kill running task processes, clear registry and run logs. Server stays up."""
