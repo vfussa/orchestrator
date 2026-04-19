@@ -157,9 +157,9 @@ def _build_task(task_name: str, agent, context_tasks: list, inputs: dict,
             injections.append(skill_block)
 
     if injections:
-        # Escape curly braces in injected skill/rules docs so CrewAI doesn't treat
-        # naming patterns like {featureName} as unresolved template variables.
-        safe = [s.replace('{', '{{').replace('}', '}}') for s in injections]
+        # Replace {varName} patterns in injected docs with [varName] so CrewAI doesn't
+        # treat naming conventions like {featureName} as unresolved template variables.
+        safe = [re.sub(r'\{(\w+)\}', r'[\1]', s) for s in injections]
         description = description + "\n\n---\n\n" + "\n\n---\n\n".join(safe)
 
     return Task(
