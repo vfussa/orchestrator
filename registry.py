@@ -33,6 +33,7 @@ def upsert_branch(
     status: str = "running",
     worktree_path: str = None,
     staged_files: list = None,
+    pr_url: str = None,
     auto_pr: bool = True,
 ) -> None:
     data = _load(project)
@@ -44,7 +45,7 @@ def upsert_branch(
         "description": description,
         "status": status,
         "worktree_path": worktree_path,
-        "pr_url": None,
+        "pr_url": pr_url or existing.get("pr_url"),
         "commits": existing.get("commits", []),
         "messages": existing.get("messages", []),
         "staged_files": staged_files or existing.get("staged_files", []),

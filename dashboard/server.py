@@ -100,7 +100,20 @@ async def dispatch(body: dict):
             )
             asyncio.run(broadcast({"type": "run_complete", "task_id": task_id}))
         except Exception as e:
-            print(f"Runner error: {e}")
+            import traceback as _tb
+            print(f"Runner error [{task_id}]: {e}")
+            _tb.print_exc()
+            try:
+                import logger as _rl
+                _rl.complete_run(project, task_id, outcome=f"error: {e}")
+            except Exception:
+                pass
+            try:
+                from registry import upsert_branch
+                upsert_branch(project, task_id, branch=f"error/{task_id}", task_type="error",
+                              description=body.get("description",""), status="error")
+            except Exception:
+                pass
 
     threading.Thread(target=_run, daemon=True).start()
     asyncio.create_task(broadcast({"type": "run_started", "task_id": task_id, "description": body["description"]}))

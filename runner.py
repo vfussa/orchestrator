@@ -91,7 +91,7 @@ def _build_skill_block(cfg: dict, description: str, project_root: str) -> str:
         skill_path = root / ".cursor" / "skills" / skill_name / "SKILL.md"
         if not skill_path.exists():
             continue
-        text = _load_file_stripped(skill_path, max_lines=300)
+        text = _load_file_stripped(skill_path, max_lines=80)
         sections = skill_sections.get(skill_name, [])
         if sections:
             extracted = [f"### {s}\n{_extract_section(text, s)}" for s in sections if _extract_section(text, s)]
@@ -104,14 +104,17 @@ def _build_skill_block(cfg: dict, description: str, project_root: str) -> str:
 
 def _build_agent(name: str):
     from crewai import Agent
+    from crewai.llm import LLM
     agents_cfg = _load_yaml(BASE / "agents.yaml")
     cfg = agents_cfg[name]
     backstory = cfg["backstory"].format(caveman=CAVEMAN_PROMPT)
+    model = cfg.get("llm", "groq/llama-3.3-70b-versatile")
+    llm = LLM(model=model, max_retries=6)
     return Agent(
         role=cfg["role"],
         goal=cfg["goal"],
         backstory=backstory,
-        llm=cfg.get("llm", "groq/llama-3.3-70b-versatile"),
+        llm=llm,
         max_iter=cfg.get("max_iter", 3),
         verbose=True,
     )
@@ -196,9 +199,11 @@ def _write_extracted_files(project_root: Path, task_outputs: list[str]) -> list[
     pattern = re.compile(r"```(?:\w+\n)?([^\n`][^\n]*)\n(.*?)```", re.DOTALL)
     for output in task_outputs:
         for m in pattern.finditer(output):
-            rel_path = m.group(1).strip()
+            rel_path = m.group(1).strip().lstrip("/").lstrip("#").strip()
             content = m.group(2)
             if "/" not in rel_path and "." not in rel_path:
+                continue
+            if rel_path.startswith("/") or not rel_path:
                 continue
             full_path = project_root / rel_path
             full_path.parent.mkdir(parents=True, exist_ok=True)
