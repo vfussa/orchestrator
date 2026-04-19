@@ -37,12 +37,12 @@ SKILL_AUTO_KEYWORDS: dict[str, list[str]] = {
 }
 
 TASK_MAP = {
-    "feature":  ["git_preflight_task", "plan_task", "architect_task", "code_task", "test_task", "review_task", "standards_task", "git_task"],
-    "bug":      ["git_preflight_task", "plan_task", "code_task", "test_task", "review_task", "standards_task", "git_task"],
-    "hotfix":   ["code_task", "test_task", "review_task", "git_task"],
-    "refactor": ["git_preflight_task", "plan_task", "architect_task", "code_task", "test_task", "review_task", "standards_task", "git_task"],
-    "test":     ["git_preflight_task", "test_task", "review_task", "git_task"],
-    "docs":     ["git_preflight_task", "plan_task", "code_task", "standards_task", "git_task"],
+    "feature":  ["plan_task", "code_task", "git_task"],
+    "bug":      ["plan_task", "code_task", "git_task"],
+    "hotfix":   ["code_task", "git_task"],
+    "refactor": ["plan_task", "code_task", "git_task"],
+    "test":     ["plan_task", "code_task", "git_task"],
+    "docs":     ["plan_task", "code_task", "git_task"],
     "chore":    ["code_task", "git_task"],
 }
 
@@ -118,7 +118,8 @@ def _build_agent(name: str):
 
 
 def _build_task(task_name: str, agent, context_tasks: list, inputs: dict,
-                project_root: str = None, cursor_ctx: dict = None, agent_name: str = None):
+                project_root: str = None, cursor_ctx: dict = None, agent_name: str = None,
+                callback=None):
     from crewai import Task
     tasks_cfg = _load_yaml(BASE / "tasks.yaml")
     cfg = tasks_cfg[task_name]
@@ -158,6 +159,7 @@ def _build_task(task_name: str, agent, context_tasks: list, inputs: dict,
         expected_output=cfg["expected_output"],
         agent=agent,
         context=context_tasks or [],
+        callback=callback,
     )
 
 
@@ -289,6 +291,18 @@ def run_crew(
 
     agent_map = {name: _build_agent(name) for name in unique_agent_names}
 
+    # Track which agents have finished — updated via task callbacks, polled by dashboard
+    completed_agents_list: list[str] = []
+
+    def make_step_callback(aname: str):
+        def _cb(task_output) -> None:
+            try:
+                completed_agents_list.append(aname)
+                run_logger.update_run(project, task_id, completed_agents=list(completed_agents_list))
+            except Exception as e:
+                print(f"[step_cb] {aname}: {e}")
+        return _cb
+
     built_tasks = []
     for tname in task_names:
         agent_name = tasks_cfg[tname]["agent"]
@@ -296,7 +310,8 @@ def run_crew(
         if not agent:
             continue
         t = _build_task(tname, agent, built_tasks.copy(), inputs,
-                        project_root=project_root, cursor_ctx=cursor_ctx, agent_name=agent_name)
+                        project_root=project_root, cursor_ctx=cursor_ctx, agent_name=agent_name,
+                        callback=make_step_callback(agent_name))
         built_tasks.append(t)
 
     crew = Crew(agents=list(agent_map.values()), tasks=built_tasks, process=Process.sequential, verbose=True)
