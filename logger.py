@@ -49,6 +49,18 @@ def update_run(project: str, task_id: str, **kwargs) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"Run log not found: {path}")
     run = json.loads(path.read_text())
+    # Auto-close the run if an error/cancelled outcome is set without completed_at
+    outcome = kwargs.get("outcome", "")
+    if outcome and (str(outcome).startswith("error") or outcome == "cancelled"):
+        if not kwargs.get("completed_at") and not run.get("completed_at"):
+            now = datetime.now(timezone.utc)
+            kwargs.setdefault("completed_at", now.isoformat())
+            if "duration_seconds" not in kwargs and not run.get("duration_seconds"):
+                try:
+                    started = datetime.fromisoformat(run["started_at"])
+                    kwargs.setdefault("duration_seconds", int((now - started).total_seconds()))
+                except Exception:
+                    pass
     run.update(kwargs)
     path.write_text(json.dumps(run, indent=2))
     return run
