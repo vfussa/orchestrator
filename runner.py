@@ -286,12 +286,22 @@ def run_crew(
     run_logger.start_run(project, task_id, task_type, description, unique_agent_names)
     upsert_branch(project, task_id, branch, task_type, description, "running")
 
+    # Derive featureName: last path component from "folder: X/Y/Z" or "feature/X" in description,
+    # falling back to branch slug or task_id.
+    _fn_match = re.search(r'(?:folder|feature)[:/\s]+([^\s,]+)', description, re.IGNORECASE)
+    if _fn_match:
+        feature_name = _fn_match.group(1).rstrip('/').split('/')[-1]
+    else:
+        # Use the descriptive part of the branch (strip task_id prefix)
+        feature_name = re.sub(r'^[^/]+/\d+-[a-f0-9]+-?', '', branch).replace('-', ' ').strip() or task_id
+
     inputs = {
         "description": description,
         "linear_id": linear_id or "",
         "task_id": task_id,
         "branch": branch,
         "project_context": project_context,
+        "featureName": feature_name,
     }
 
     agent_map = {name: _build_agent(name) for name in unique_agent_names}
