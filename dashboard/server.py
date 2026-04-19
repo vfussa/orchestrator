@@ -19,6 +19,24 @@ from logger import list_runs, count_runs, get_output
 
 VERSION = "0.0.1"
 
+
+def get_version() -> str:
+    """Compute version from git: 0.0.{commit_count} ({short_hash})"""
+    import subprocess
+    try:
+        repo = Path(__file__).parent.parent
+        count = subprocess.check_output(
+            ["git", "rev-list", "--count", "HEAD"],
+            cwd=repo, stderr=subprocess.DEVNULL
+        ).decode().strip()
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=repo, stderr=subprocess.DEVNULL
+        ).decode().strip()
+        return f"0.0.{count} ({sha})"
+    except Exception:
+        return "0.0.0"
+
 app = FastAPI()
 connected_clients: list[WebSocket] = []
 
@@ -182,7 +200,7 @@ def _get_state() -> dict:
     all_runs = {}
     for project in branches:
         all_runs[project] = list_runs(project, limit=20)
-    return {"branches": branches, "runs": all_runs, "version": VERSION, "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"branches": branches, "runs": all_runs, "version": VERSION, "timestamp": datetime.now(timezone.utc).isoformat(), "version": get_version()}
 
 
 # Push state updates every 5 seconds

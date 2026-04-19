@@ -603,6 +603,9 @@ function renderAll(data) {
 
   // Project pills
   const projects = Object.keys(data.branches || {});
+  const vEl = document.getElementById('app-version');
+  if (vEl && data.version) vEl.textContent = 'v' + data.version;
+
   const projEl = document.getElementById('stat-project');
   if (projects.length) {
     projEl.style.display = '';
