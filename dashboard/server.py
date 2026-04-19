@@ -211,9 +211,27 @@ async def periodic_push():
             await broadcast({"type": "state", "data": _get_state()})
 
 
+
+async def _clear_stale_runs():
+    """On startup, mark any runs still in_progress as failed (server was restarted)."""
+    import yaml
+    from datetime import datetime, timezone
+    import logger as run_logger
+    try:
+        cfg = yaml.safe_load((Path(__file__).parent.parent / "projects.yaml").read_text())
+        for project in cfg["projects"]:
+            for run in run_logger.list_runs(project, limit=100):
+                if run.get("outcome") == "in_progress" or (run.get("outcome") and "error" in run["outcome"] and not run.get("completed_at")):
+                    run_logger.update_run(project, run["task_id"],
+                        outcome="error: server restarted — task was interrupted",
+                        completed_at=datetime.now(timezone.utc).isoformat())
+    except Exception as e:
+        print(f"[startup] stale run cleanup: {e}")
+
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(periodic_push())
+    await _clear_stale_runs()
 
 
 if __name__ == "__main__":
