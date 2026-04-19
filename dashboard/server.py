@@ -183,21 +183,18 @@ async def run_shell(body: dict):
 
 @app.post("/api/restart")
 async def restart_server():
-    """Restart the dashboard server itself via a detached subprocess."""
-    import subprocess, os, signal
-    orch = Path(__file__).parent.parent
-    venv_python = orch / ".venv/bin/python3"
-    subprocess.Popen(
-        [str(venv_python), str(Path(__file__))],
-        cwd=str(orch),
-        start_new_session=True,
-        stdout=open("/tmp/crew-server.log", "w"),
-        stderr=subprocess.STDOUT,
-    )
-    async def _kill():
-        await asyncio.sleep(1)
-        os.kill(os.getpid(), signal.SIGTERM)
-    asyncio.create_task(_kill())
+    """Restart via a wrapper script — avoids port-binding race condition."""
+    import subprocess, os
+    pid = os.getpid()
+    venv_py = str(Path(__file__).parent.parent / ".venv/bin/python3")
+    srv = str(Path(__file__))
+    with open("/tmp/crew-restart.sh", "w") as f:
+        f.write("#!/bin/bash\n")
+        f.write("kill %d\n" % pid)
+        f.write("while lsof -ti:8765 > /dev/null 2>&1; do sleep 0.3; done\n")
+        f.write("nohup %s %s > /tmp/crew-server.log 2>&1 &\n" % (venv_py, srv))
+    os.chmod("/tmp/crew-restart.sh", 0o755)
+    subprocess.Popen(["bash", "/tmp/crew-restart.sh"], start_new_session=True)
     return {"status": "restarting"}
 
 @app.post("/api/reset")
