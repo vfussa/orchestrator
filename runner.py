@@ -126,7 +126,9 @@ def _build_task(task_name: str, agent, context_tasks: list, inputs: dict,
     from crewai import Task
     tasks_cfg = _load_yaml(BASE / "tasks.yaml")
     cfg = tasks_cfg[task_name]
-    description = cfg["description"].format(**{k: v or "" for k, v in inputs.items()})
+    _fmt = {k: v or "" for k, v in inputs.items()}
+    description = cfg["description"].format(**_fmt)
+    expected_output = cfg["expected_output"].format(**_fmt)
 
     injections = []
 
@@ -159,7 +161,7 @@ def _build_task(task_name: str, agent, context_tasks: list, inputs: dict,
 
     return Task(
         description=description,
-        expected_output=cfg["expected_output"],
+        expected_output=expected_output,
         agent=agent,
         context=context_tasks or [],
         callback=callback,
