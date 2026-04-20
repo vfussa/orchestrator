@@ -18,19 +18,33 @@ import logger as run_logger
 
 load_dotenv(Path(__file__).parent / ".env")
 
-# Patch CrewAI's interpolate_only so unknown template vars (e.g. {featureName} in
-# skill docs) silently become "" instead of crashing with KeyError.
-# Must patch both the module AND crewai.task's local binding (imported via `from ... import`).
+# Patch CrewAI's interpolate_only to tolerate unknown template vars (e.g. {featureName}
+# in injected skill docs). We replace with "" rather than raising KeyError.
+# Patch both the module AND crewai.task's module global (imported via `from ... import`).
 try:
     import crewai.utilities.string_utils as _su
     import crewai.task as _ct
-    _orig_interpolate = _su.interpolate_only
+
+    _VARIABLE_PATTERN = _su._VARIABLE_PATTERN
+
     def _safe_interpolate(text, inputs, *a, **kw):
-        return _orig_interpolate(text, defaultdict(str, inputs), *a, **kw)
+        if not text or ("{" not in text and "}" not in text):
+            return text or ""
+        # Build a complete inputs dict that has all vars found in the text,
+        # defaulting missing ones to "" so the `var not in inputs` check passes.
+        variables = _VARIABLE_PATTERN.findall(text)
+        safe_inputs = dict(inputs)
+        for var in variables:
+            if var not in safe_inputs:
+                safe_inputs[var] = ""
+        return _su.__dict__["_orig_interpolate"](text, safe_inputs, *a, **kw)
+
+    _su._orig_interpolate = _su.interpolate_only
     _su.interpolate_only = _safe_interpolate
     _ct.interpolate_only = _safe_interpolate
-except Exception:
-    pass
+    print("[runner] interpolate_only patched OK")
+except Exception as e:
+    print(f"[runner] interpolate_only patch FAILED: {e}")
 
 BASE = Path(__file__).parent
 CAVEMAN_PROMPT = (
