@@ -121,7 +121,7 @@ def _build_skill_block(cfg: dict, description: str, project_root: str) -> str:
         skill_path = root / ".cursor" / "skills" / skill_name / "SKILL.md"
         if not skill_path.exists():
             continue
-        text = _load_file_stripped(skill_path, max_lines=80)
+        text = _load_file_stripped(skill_path, max_lines=25)
         sections = skill_sections.get(skill_name, [])
         if sections:
             extracted = [f"### {s}\n{_extract_section(text, s)}" for s in sections if _extract_section(text, s)]
