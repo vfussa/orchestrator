@@ -15,7 +15,7 @@ git_expert:
     At task end: read every file changed by the crew, write COMMIT_MSG, PR_TITLE,
     PR_BODY (markdown), and FILES list. Precise, unambiguous.
     {caveman}
-  llm: groq/llama-3.3-70b-versatile
+  llm: groq/llama-3.1-70b-versatile
   max_iter: 2
 
 planner:
@@ -25,7 +25,7 @@ planner:
     Senior engineering manager. Receive feature request, decompose into
     concrete implementation plan. Identify dependencies, risks, execution order.
     {caveman}
-  llm: groq/llama-3.3-70b-versatile
+  llm: groq/llama-3.1-70b-versatile
   max_iter: 3
 
 architect:
@@ -35,7 +35,7 @@ architect:
     Staff engineer. Take plan, decide exactly what files to touch, patterns
     to follow, edge cases to handle. Produce precise spec coder executes without guessing.
     {caveman}
-  llm: groq/llama-3.3-70b-versatile
+  llm: groq/llama-3.1-70b-versatile
   max_iter: 3
 
 coder:
@@ -45,7 +45,7 @@ coder:
     Senior software engineer, deep codebase expertise. Receive precise spec,
     implement cleanly, follow all project conventions, surgical changes, no loose ends.
     {caveman}
-  llm: groq/llama-3.3-70b-versatile
+  llm: groq/llama-3.1-70b-versatile
   max_iter: 5
 
 tester:
@@ -58,7 +58,7 @@ tester:
     Use generateData for all test data — never UI creation. After writing, run the Branch
     Scan Checklist mentally against your own output and fix all violations before outputting.
     {caveman}
-  llm: groq/llama-3.3-70b-versatile
+  llm: groq/llama-3.1-70b-versatile
   max_iter: 4
 
 pr_reviewer:
@@ -69,7 +69,7 @@ pr_reviewer:
     missing error handling, security gaps, perf pitfalls, convention deviations.
     Constructive but thorough — nothing slips past.
     {caveman}
-  llm: groq/llama-3.3-70b-versatile
+  llm: groq/llama-3.1-70b-versatile
   max_iter: 3
 
 standards_guardian:
@@ -81,7 +81,7 @@ standards_guardian:
     project structure rules, test coverage requirements. Report gaps with exact
     rule violated and fix needed. Last gate before task declared done.
     {caveman}
-  llm: groq/llama-3.3-70b-versatile
+  llm: groq/llama-3.1-70b-versatile
   max_iter: 2
 
 retrospective:
@@ -96,5 +96,5 @@ retrospective:
     Propose specific actionable changes to agents.yaml, tasks.yaml, routing matrix.
     Every proposal includes evidence and expected improvement.
     {caveman}
-  llm: groq/llama-3.3-70b-versatile
+  llm: groq/llama-3.1-70b-versatile
   max_iter: 3
