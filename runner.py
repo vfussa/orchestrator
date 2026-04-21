@@ -27,7 +27,8 @@ try:
 
     _VARIABLE_PATTERN = _su._VARIABLE_PATTERN
 
-    def _safe_interpolate(text, inputs, *a, **kw):
+    def _safe_interpolate(input_string=None, inputs=None, *a, **kw):
+        text = input_string
         if not text or ("{" not in text and "}" not in text):
             return text or ""
         # Build a complete inputs dict that has all vars found in the text,
