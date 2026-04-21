@@ -139,7 +139,7 @@ def _build_agent(name: str):
     cfg = agents_cfg[name]
     backstory = cfg["backstory"].format(caveman=CAVEMAN_PROMPT)
     model = cfg.get("llm", "groq/llama-3.3-70b-versatile")
-    llm = LLM(model=model, max_retries=6)
+    llm = LLM(model=model, max_retries=12)
     return Agent(
         role=cfg["role"],
         goal=cfg["goal"],
@@ -370,7 +370,19 @@ def run_crew(
         built_tasks.append(t)
 
     crew = Crew(agents=list(agent_map.values()), tasks=built_tasks, process=Process.sequential, verbose=True)
-    result = crew.kickoff(inputs=inputs)
+    import time as _time
+    from litellm.exceptions import RateLimitError as _RateLimitError
+    for _attempt in range(8):
+        try:
+            result = crew.kickoff(inputs=inputs)
+            break
+        except _RateLimitError as _e:
+            if _attempt < 7:
+                _wait = 70
+                print(f"[runner] Rate limit hit (attempt {_attempt+1}/8), waiting {_wait}s...")
+                _time.sleep(_wait)
+            else:
+                raise
 
     task_outputs = [str(t.output) for t in built_tasks if hasattr(t, "output") and t.output]
 
