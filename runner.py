@@ -418,5 +418,6 @@ def run_revision(project: str, task_id: str, feedback: str) -> dict:
     if not branch_info:
         return {"error": "task not found"}
     description = f"REVISION of {task_id}: {feedback}\nOriginal: {branch_info.get('description', '')}"
+    original_type = branch_info.get("task_type", "refactor")
     return run_crew(project=project, task_id=f"{task_id}-rev", description=description,
-                    task_type="bug", branch=branch_info.get("branch"), auto_pr=False)
+                    task_type=original_type, branch=branch_info.get("branch"), auto_pr=False)
