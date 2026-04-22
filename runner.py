@@ -271,7 +271,7 @@ def _create_branch_and_pr(
     result["commit_msg"] = msg
 
     if auto_pr:
-        title = pr_title or f"{description[:60]} [{task_id}]"
+        title = pr_title or description[:60]
         if linear_id:
             title = f"[{linear_id}] {title}"
         body = pr_body or f"Task: {description}\n\nFiles changed:\n" + "\n".join(f"- {f}" for f in staged_files)
@@ -296,7 +296,7 @@ def run_crew(
 
     if not branch:
         slug = re.sub(r"[^a-z0-9]+", "-", description.lower())[:40].strip("-")
-        branch = f"{task_type}/{task_id}-{slug}"
+        branch = f"{task_type}/{slug}"
 
     project_root = resolve_project_path(project)
 
