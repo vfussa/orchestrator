@@ -138,7 +138,7 @@ def _build_agent(name: str):
     agents_cfg = _load_yaml(BASE / "agents.yaml")
     cfg = agents_cfg[name]
     backstory = cfg["backstory"].format(caveman=CAVEMAN_PROMPT)
-    model = cfg.get("llm", "groq/llama-3.3-70b-versatile")
+    model = cfg.get("llm", "gemini/gemini-2.0-flash")
     llm = LLM(model=model, max_retries=12, max_tokens=8192)
     return Agent(
         role=cfg["role"],
