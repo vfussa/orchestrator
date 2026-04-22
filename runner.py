@@ -139,7 +139,7 @@ def _build_agent(name: str):
     cfg = agents_cfg[name]
     backstory = cfg["backstory"].format(caveman=CAVEMAN_PROMPT)
     model = cfg.get("llm", "groq/llama-3.3-70b-versatile")
-    llm = LLM(model=model, max_retries=12)
+    llm = LLM(model=model, max_retries=12, max_tokens=8192)
     return Agent(
         role=cfg["role"],
         goal=cfg["goal"],
