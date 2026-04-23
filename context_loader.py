@@ -187,8 +187,7 @@ def load_task_skill_context(project_root: str, task_type: str, project_cfg: dict
         p = root / rel
         content = _read_stripped(p, max_lines=250)
         if content:
-            parts.append(f"=== {rel} ===
-{content}")
+            parts.append("=== " + str(rel) + " ===\n" + content)
 
     # Skill files keyed to this task_type
     skill_map = project_cfg.get("skill_map", {})
@@ -197,8 +196,7 @@ def load_task_skill_context(project_root: str, task_type: str, project_cfg: dict
         p = root / rel
         content = _read_stripped(p, max_lines=300)
         if content:
-            parts.append(f"=== skill: {rel} ===
-{content}")
+            parts.append("=== skill: " + str(rel) + " ===\n" + content)
 
     return "
 
