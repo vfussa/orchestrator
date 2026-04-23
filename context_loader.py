@@ -167,3 +167,39 @@ def build_agent_context_block(description: str, cursor_ctx: dict) -> str:
             if content:
                 parts.append(f"## SPECIALIST CONTEXT: {agent_file}\n{content}")
     return "\n\n---\n\n".join(parts)
+
+def load_task_skill_context(project_root: str, task_type: str, project_cfg: dict) -> str:
+    """Load CLAUDE.md + task_type-specific skill files from the repo.
+
+    Configured per project in projects.yaml:
+      context_files: [CLAUDE.md]          # always loaded
+      skill_map:
+        test:    [.cursor/skills/e2e-tests/SKILL.md, ...]
+        feature: [.cursor/skills/feature-development/SKILL.md]
+    """
+    if not project_root:
+        return ""
+    root = Path(project_root)
+    parts = []
+
+    # Always-on context files (e.g. CLAUDE.md)
+    for rel in project_cfg.get("context_files", []):
+        p = root / rel
+        content = _read_stripped(p, max_lines=250)
+        if content:
+            parts.append(f"=== {rel} ===
+{content}")
+
+    # Skill files keyed to this task_type
+    skill_map = project_cfg.get("skill_map", {})
+    skill_files = skill_map.get(task_type, skill_map.get("default", []))
+    for rel in skill_files:
+        p = root / rel
+        content = _read_stripped(p, max_lines=300)
+        if content:
+            parts.append(f"=== skill: {rel} ===
+{content}")
+
+    return "
+
+".join(parts)

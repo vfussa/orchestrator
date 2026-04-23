@@ -138,7 +138,7 @@ def _build_agent(name: str):
     agents_cfg = _load_yaml(BASE / "agents.yaml")
     cfg = agents_cfg[name]
     backstory = cfg["backstory"].format(caveman=CAVEMAN_PROMPT)
-    model = cfg.get("llm", "gemini/gemini-2.0-flash")
+    model = cfg.get("llm", "gemini/gemini-2.5-flash")
     llm = LLM(model=model, max_retries=12, max_tokens=8192)
     return Agent(
         role=cfg["role"],
@@ -304,11 +304,15 @@ def run_crew(
     # Scan .cursor folder once — used by all tasks in this run
     cursor_ctx = scan_cursor_folder(project_root) if project_root else {}
 
-    # Load structure hint from projects.yaml
+    # Load structure hint + skill context from projects.yaml
     project_context = ""
+    skill_context = ""
     try:
-        proj_cfg = yaml.safe_load((BASE / "projects.yaml").read_text())
-        project_context = proj_cfg.get("projects", {}).get(project, {}).get("structure_hint", "")
+        from context_loader import load_task_skill_context
+        proj_cfg_data = yaml.safe_load((BASE / "projects.yaml").read_text())
+        _proj = proj_cfg_data.get("projects", {}).get(project, {})
+        project_context = _proj.get("structure_hint", "")
+        skill_context = load_task_skill_context(project_root, task_type, _proj)
     except Exception:
         pass
 

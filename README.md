@@ -205,3 +205,114 @@ crew-orchestrator/
 **Skills not loading** — the crew reads skills from your project's `.cursor/skills/` directory. If that folder doesn't exist, agents run without project-specific conventions (still works).
 
 **MCP not showing in Cursor** — restart Cursor after editing `mcp.json`, and verify the Python path points to the venv (`~/crew-orchestrator/.venv/bin/python3`).
+
+
+---
+
+## Adding a New Repository
+
+Follow these steps every time you onboard a new repo into the orchestrator.
+
+### 1. Register the project in `projects.yaml`
+
+```yaml
+projects:
+  my-repo:
+    path: ~/path/to/my-repo          # local checkout path
+    linear_project: ABC              # Linear project key (optional)
+    slack_channel: "#eng"            # Slack channel for notifications (optional)
+    default_base_branch: main
+
+    # Always-loaded context files (relative to repo root)
+    context_files:
+      - CLAUDE.md                    # or README.md, AGENTS.md, etc.
+
+    # Skill files loaded per task_type (relative to repo root)
+    skill_map:
+      test:
+        - .cursor/skills/e2e-tests/SKILL.md
+        - .cursor/skills/react-component-tests/SKILL.md
+        - .cursor/skills/unit-tests/SKILL.md
+      feature:
+        - .cursor/skills/feature-development/SKILL.md
+        - .cursor/skills/ui-implementation/SKILL.md
+      bug:
+        - .cursor/skills/browser-testing-loop/SKILL.md
+      refactor:
+        - .cursor/skills/feature-development/SKILL.md
+
+    # Brief structure hint injected into every agent prompt
+    structure_hint: >
+      TypeScript/React repo. Source lives under src/.
+      Tests: *.test.ts co-located with source files.
+      Never place files at repo root.
+```
+
+### 2. Create context files in the repo
+
+The orchestrator loads files listed in `context_files` and `skill_map` at task start.
+Every repo should have **at least one** of the following:
+
+| File | Purpose |
+|------|---------|
+| `CLAUDE.md` | Project rules, conventions, stack overview |
+| `.cursor/skills/e2e-tests/SKILL.md` | Playwright test patterns and examples |
+| `.cursor/skills/unit-tests/SKILL.md` | Unit test patterns (Vitest/Jest/etc.) |
+| `.cursor/skills/react-component-tests/SKILL.md` | RTL component test patterns |
+| `.cursor/skills/feature-development/SKILL.md` | Feature implementation guidelines |
+
+**Minimum viable `CLAUDE.md`** (put this in the repo root):
+
+```markdown
+## Stack
+- Language: TypeScript
+- Framework: React + Vite
+- Tests: Vitest + Testing Library
+- E2E: Playwright
+
+## Project Structure
+src/
+  features/        # Feature modules
+  components/      # Shared components
+  utils/           # Helpers
+  *.test.ts        # Unit tests co-located with source
+
+## Test Conventions
+- Test files: `*.test.ts` (same directory as source)
+- E2E files: `tests/e2e/*.spec.ts`
+- Never use `any` in tests
+- Mock external calls with vi.mock()
+
+## Naming
+- Components: PascalCase
+- Hooks: useXxx
+- Utils: camelCase
+```
+
+### 3. Verify the context is loading
+
+After registering the project, run a test dispatch and check the planner output:
+
+```bash
+curl -s -X POST http://localhost:8765/dispatch \
+  -H "Content-Type: application/json" \
+  -d '{"project":"my-repo","description":"Write unit test for Foo component","task_type":"test"}'
+```
+
+Watch the dashboard — the planner agent should reference the correct file paths
+and test patterns from your repo. If it still writes wrong paths, check:
+- `context_files` paths exist in the repo
+- `skill_map` paths exist in the repo
+- `structure_hint` is accurate
+
+### 4. Iterate on skill files
+
+Skill files are the primary way to teach agents your conventions.
+They are plain Markdown — write them as if explaining to a new developer:
+
+- Show a **good example** of a test file
+- List **what NOT to do**
+- Specify **exact import paths**
+- Mention **naming conventions**
+
+The more concrete and example-driven the skill file, the better the agent output.

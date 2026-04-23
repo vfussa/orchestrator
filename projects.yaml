@@ -2,17 +2,28 @@ projects:
   planable-app:
     path: ~/Work/PlanableRepo/planable-app
     linear_project: PLN
-    slack_channel: "#eng"
+    slack_channel: '#eng'
     default_base_branch: main
+    structure_hint: 'TypeScript/React/Meteor codebase. ALL source files live under
+      imports/. Feature code: imports/ui/client/features/<kebab-case>/ Shared components:
+      imports/ui/client/components/ Utils: imports/utils/ Server: imports/api/ Tests:
+      *.tests.ts (same directory as the source file, NOT at project root). NEVER place
+      files at the project root level. Always prefix paths with imports/. Example
+      correct path: imports/utils/formatBytes.tests.ts Example WRONG path: utils/formatBytes.tests.ts
+      (missing imports/ prefix)
 
-    # Injected into every agent task as {project_context}
-    structure_hint: >
-      TypeScript/React/Meteor codebase. ALL source files live under imports/.
-      Feature code: imports/ui/client/features/<kebab-case>/
-      Shared components: imports/ui/client/components/
-      Utils: imports/utils/
-      Server: imports/api/
-      Tests: *.tests.ts (same directory as the source file, NOT at project root).
-      NEVER place files at the project root level. Always prefix paths with imports/.
-      Example correct path: imports/utils/formatBytes.tests.ts
-      Example WRONG path: utils/formatBytes.tests.ts (missing imports/ prefix)
+      '
+    context_files:
+    - CLAUDE.md
+    skill_map:
+      test:
+      - .cursor/skills/e2e-tests/SKILL.md
+      - .cursor/skills/react-component-tests/SKILL.md
+      - .cursor/skills/unit-tests/SKILL.md
+      feature:
+      - .cursor/skills/feature-development/SKILL.md
+      - .cursor/skills/ui-implementation/SKILL.md
+      bug:
+      - .cursor/skills/browser-testing-loop/SKILL.md
+      refactor:
+      - .cursor/skills/feature-development/SKILL.md
