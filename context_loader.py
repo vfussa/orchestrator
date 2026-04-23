@@ -168,11 +168,12 @@ def build_agent_context_block(description: str, cursor_ctx: dict) -> str:
                 parts.append(f"## SPECIALIST CONTEXT: {agent_file}\n{content}")
     return "\n\n---\n\n".join(parts)
 
+
 def load_task_skill_context(project_root: str, task_type: str, project_cfg: dict) -> str:
     """Load CLAUDE.md + task_type-specific skill files from the repo.
 
     Configured per project in projects.yaml:
-      context_files: [CLAUDE.md]          # always loaded
+      context_files: [CLAUDE.md]
       skill_map:
         test:    [.cursor/skills/e2e-tests/SKILL.md, ...]
         feature: [.cursor/skills/feature-development/SKILL.md]
@@ -185,19 +186,17 @@ def load_task_skill_context(project_root: str, task_type: str, project_cfg: dict
     # Always-on context files (e.g. CLAUDE.md)
     for rel in project_cfg.get("context_files", []):
         p = root / rel
-        content = _read_stripped(p, max_lines=250)
-        if content:
-            parts.append("=== " + str(rel) + " ===\n" + content)
+        text = _read_stripped(p, max_lines=250)
+        if text:
+            parts.append("=== " + str(rel) + " ===\n" + text)
 
     # Skill files keyed to this task_type
     skill_map = project_cfg.get("skill_map", {})
     skill_files = skill_map.get(task_type, skill_map.get("default", []))
     for rel in skill_files:
         p = root / rel
-        content = _read_stripped(p, max_lines=300)
-        if content:
-            parts.append("=== skill: " + str(rel) + " ===\n" + content)
+        text = _read_stripped(p, max_lines=300)
+        if text:
+            parts.append("=== skill: " + str(rel) + " ===\n" + text)
 
-    return "
-
-".join(parts)
+    return "\n\n".join(parts)
